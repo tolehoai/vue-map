@@ -8,7 +8,7 @@
     <select v-model="selectedCity" @change="onCityChange($event)">
       <option
         v-for="(city, index) in cityInfo"
-        v-bind:value="city.value"
+        v-bind:value="city.name"
         v-bind:key="index"
       >
         {{ city.name }}
@@ -26,12 +26,25 @@
       </option>
     </select>
     <p v-if="!loadMap">Loading map...</p>
+    <div>
+      <b-table
+        hover
+        :items="hotelListOfCity"
+        :fields="usergroupTable.fields"
+        responsive="sm"
+        striped
+        @row-clicked="myRowClickHandler"
+      ></b-table>
+    </div>
+
     <GmapMap
       v-if="loadMap"
+      ref="map"
       :center="{ lat: this.position.lat, lng: this.position.lng }"
       :zoom="16"
       map-type-id="hybrid"
       style="width: 99vw; height: 550px"
+      gestureHandling="greedy"
     >
       <DirectionsRenderer
         travelMode="DRIVING"
@@ -58,15 +71,26 @@
 <script>
 import axios from "axios";
 import DirectionsRenderer from "./DirectionsRenderer";
-
+const es = new EventSource(`http://10.233.6.135:8081/events/poi`);
 export default {
   name: "GoogleMap",
   components: { DirectionsRenderer },
   props: {
     msg: String,
   },
+
   data() {
     return {
+      currentPositionOfCity: {},
+      usergroupTable: {
+        fields: [
+          { key: "address", label: "Address" },
+          { key: "cityName", label: "City Name" },
+          { key: "hotelName", label: "Hotel Name" },
+          { key: "icaoCode", label: "ICAO" },
+        ],
+      },
+      hotelListOfCity: [],
       // startLocation: {
       //   lat: 10.0299337,
       //   lng: 105.7706153,
@@ -82,40 +106,7 @@ export default {
         lat: 0,
         lng: 0,
       },
-      cityInfo: [
-        {
-          name: "Cần Thơ",
-          value: "cantho",
-          position: {
-            lat: 10.03711,
-            lng: 105.78825,
-          },
-        },
-        {
-          name: "Hồ Chí Minh",
-          value: "hochiminh",
-          position: {
-            lat: 10.82302,
-            lng: 106.62965,
-          },
-        },
-        {
-          name: "Hà Nội",
-          value: "hanoi",
-          position: {
-            lat: 21.0245,
-            lng: 105.84117,
-          },
-        },
-        {
-          name: "Đà Nẵng",
-          value: "danang",
-          position: {
-            lat: 16.06778,
-            lng: 108.22083,
-          },
-        },
-      ],
+      cityInfo: [],
       placeInfo: [
         {
           type: "school",
@@ -134,10 +125,41 @@ export default {
           name: "Cây ATM",
         },
       ],
-      selectedCity: "cantho",
+      selectedCity: "",
+      poi: [],
     };
   },
   methods: {
+    myRowClickHandler(record, index) {
+      console.log("row poi: ", this.poi);
+      console.log(record.hotelId, index); // This will be the item data for the row
+      axios
+        .get(
+          `http://10.233.6.135:8081/records/hotels/byIdOnCity/${record.hotelId}`
+        )
+        .then((response) => {
+          console.log("hotel info ", response);
+          console.log("object: ", response.data.rows[0].hotel.geo);
+          this.$refs.map.panTo({
+            lat: response.data.rows[0].hotel.geo.lat,
+            lng: response.data.rows[0].hotel.geo.lon,
+          });
+          axios
+            .post(
+              "http://10.233.6.135:8081/records/select/geo",
+              response.data.rows[0].hotel.geo
+            )
+            .then(() => {
+              // console.log("aroud: ", this.poi);
+            })
+            .catch((error) => {
+              console.log(error);
+            });
+        })
+        .catch((e) => {
+          this.errors.push(e);
+        });
+    },
     directions(destination) {
       console.log(destination);
 
@@ -193,14 +215,47 @@ export default {
     },
 
     onCityChange(event) {
-      this.selectedCity = event.target.value;
-      console.log(event.target.value);
-      let citySelected = this.cityInfo.find(
-        (city) => city.value === this.selectedCity
-      );
+      // this.selectedCity = event.target.value;
+      // console.log(event.target.value);
+      // let citySelected = this.cityInfo.find(
+      //   (city) => city.value === this.selectedCity
+      // );
 
-      this.position.lat = citySelected.position.lat;
-      this.position.lng = citySelected.position.lng;
+      // this.position.lat = citySelected.position.lat;
+      // this.position.lng = citySelected.position.lng;
+      console.log(event.target.value);
+      this.selectedCity = event.target.value;
+      axios
+        .get(
+          `http://10.233.6.135:8081/records/hotels/byCity/${this.selectedCity}`
+        )
+        .then((response) => {
+          console.log("result ", response.data.rows);
+          this.hotelListOfCity = [];
+          response.data.rows.map((item) => {
+            return this.hotelListOfCity.push({
+              hotelName: item.hotel.name,
+              address: item.hotel.address,
+              cityName: item.hotel.city,
+              icaoCode: item.airport.icao,
+              hotelId: item.hotel.id,
+            });
+          });
+          console.log("state: ", this.hotelListOfCity);
+          // this.hotelListOfCity.hotelName = response.data.rows.hotel.name;
+
+          //   this.hotelListOfCity=[
+          // {
+          //   hotelName: response.data.rows.hotel.name,
+          //   address: response.data.rows.hotel.address,
+          //   cityName: response.data.rows.hotel.city,
+          //   icaoCode: response.data.rows.airport.icao,
+          // },
+          // ],
+        })
+        .catch((e) => {
+          this.errors.push(e);
+        });
     },
     onPlaceTypeChange(event) {
       console.log(event.target.value);
@@ -227,6 +282,7 @@ export default {
     },
 
     setPlace(place) {
+      console.log("info: ", place);
       console.log("lat: ", place.geometry.location.lat());
       console.log("lng: ", place.geometry.location.lng());
     },
@@ -234,6 +290,31 @@ export default {
   created() {
     this.locateMe();
     console.log(this.markers);
+  },
+  mounted() {
+    es.addEventListener("poi", (event) => {
+      this.markers = [];
+      // console.log("return: ", JSON.parse(JSON.parse(event.data)));
+      this.poi = JSON.parse(JSON.parse(event.data));
+      this.poi.forEach((value) => {
+        var position = {
+          lat: value.position[0],
+          lng: value.position[1],
+        };
+        this.markers.push(position);
+      });
+      console.log("poi: ", this.poi);
+      console.log("marker: ", this.markers);
+    });
+    axios
+      .get(`http://10.233.6.135:8081/records/destinations`)
+      .then((response) => {
+        console.log(response);
+        this.cityInfo = response.data.rows;
+      })
+      .catch((e) => {
+        this.errors.push(e);
+      });
   },
 };
 </script>
